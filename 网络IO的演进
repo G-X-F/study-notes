@@ -1,0 +1,94 @@
+    最近学了一下网络IO的演进过程,做个记录,加深印象.
+
+    先来看看最早的网络IO方式
+
+/**
+ * @author gongxiufu
+ * @date 2021/5/18 22:31
+ */
+public class BioServer {
+    public static void main(String[] args) throws IOException {
+        //监听8080端口
+        ServerSocket serverSocket = new ServerSocket(8080);
+        while(true) {
+            Socket accept = serverSocket.accept();
+            InputStream inputStream = accept.getInputStream();
+            byte[] buff = new byte[1024];
+            int len;
+            //read 方法是阻塞的，当没有数据到来时,线程会一直阻塞在read方法
+            while ((len = inputStream.read(buff)) != -1) {
+                System.out.println(new String(buff,0,len));
+            }
+        }
+    }
+}
+
+    服务端开启一个线程监听连接事件,当有连接过来时,接收连接,然后监听数据的到来,如果没有数据线程则一直处于阻塞状态,不能做其他的事情.所以早期的服务器设计中,为了能够同时服务多个连接,通常采用的方式是
+服务端每accept一个连接,就开启一个新的线程来监听将要到达的数据.
+    这样做有什么缺点呢？每当有一个新的客户端来连接服务端时，我们都需要为这个客户端创建一个线程来处理读数据的操作，当并发度很高时，我们就需要创建很多的线程，这显然这是不可取的。线程是服务器的宝贵资
+源，创建和销毁都需要花费很长时间，当线程过多时，CPU的上线文切换也更加频繁，这样就会造成服务响应缓慢。当线程过多时，甚至还会出现句柄溢出、OOM等异常，最终导致服务宕机.后来通过线程池的方式来解决
+线程频繁创建的问题，但是依然无法解决内核阻塞read的缺陷.
+    因此BIO的服务端，适用于并发度不高的应用场景，但是对于高并发，服务负载较重的场景，使用BIO显然是不适合的。
+    
+    我们要记住,IO方式的改变最主要的原因是内核改变！！！！
+    
+    接下来，我们迎来了NIO，意思为非阻塞IO，NIO只针对网络IO有意义.我们知道IO方式的改变，肯定是内核发生了变化.linux 为我们提供了一种新的IO方式,线程可以不再阻塞一直等待 accept、read 等IO事件到来,它可以循环的检查所有的连接，
+ 如果检查到有IO事件，则进行相应的IO操作，没有则检查下一个连接的IO事件.
+ 
+    /**
+ * @author gongxiufu
+ * @date 2021/5/18 23:04
+ */
+public class NioServer {
+    public static void main(String[] args) throws IOException {
+        //打开一个ServerSocketChannel，作用是accept
+        ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+        //监听端口
+        serverSocketChannel.bind(new InetSocketAddress(8080));
+        //设置为非阻塞
+        serverSocketChannel.configureBlocking(false);
+        // Selector 选择器
+        Selector selector = Selector.open();
+        //注册感兴趣事件
+        serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+
+        while(true) {
+            //一直阻塞直到有IO事件
+            Set<SelectionKey> selectionKeys = selector.selectedKeys();
+            Iterator<SelectionKey> iterator = selectionKeys.iterator();
+            while (iterator.hasNext()) {
+                SelectionKey selectionKey = iterator.next();
+                if(selectionKey.isAcceptable()) {
+                    SocketChannel socketChannel = serverSocketChannel.accept();
+                    //设置为非阻塞
+                    socketChannel.configureBlocking(false);
+                    //注册读感兴趣事件
+                    socketChannel.register(selector,SelectionKey.OP_READ);
+                }
+                if(selectionKey.isReadable()) {
+                    SocketChannel  channel = (SocketChannel)selectionKey.channel();
+                    ByteBuffer byteBuffer = ByteBuffer.allocate(1024);
+                    channel.read(byteBuffer);
+                    //切换写模式
+                    byteBuffer.flip();
+                    System.out.println(Charset.defaultCharset().decode(byteBuffer));
+                    //再次注册读感兴趣事件
+                    channel.register(selector,SelectionKey.OP_READ);
+                }
+                // 将SelectionKey从集合中移除，
+                // 这一步很重要，如果不移除，那么下次调用selectKeys()方法时，又会遍历到该SelectionKey，这就造成重复处理了，而且最终selectionKeys这个集合的大小会越来越大。
+                iterator.remove();
+            }
+        }
+    }
+}
+    
+    
+
+
+
+
+
+     
+
+ 
